@@ -7,9 +7,20 @@ export async function updateSession(request: NextRequest) {
     request,
   })
 
+  // Guard: Check if env vars are set (required for Supabase client)
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+
+  if (!supabaseUrl || !supabaseAnonKey) {
+    // Env vars not set; skip Supabase auth check for now
+    // This can happen in development or during Vercel build
+    console.warn('⚠️ Supabase env vars not configured. Skipping auth check.')
+    return supabaseResponse
+  }
+
   const supabase = createServerClient<Database>(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    supabaseUrl,
+    supabaseAnonKey,
     {
       cookies: {
         getAll() {
