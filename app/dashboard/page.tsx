@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
+import Link from 'next/link'
 
 interface StaffProfile {
   role: 'admin' | 'vaporista'
@@ -82,15 +83,15 @@ export default async function DashboardPage() {
         <h3 className="font-semibold text-blue-900 mb-2">Quick Actions</h3>
         <ul className="text-sm text-blue-800 space-y-1">
           <li>
-            → <a href="/dashboard/stock" className="hover:underline">Kelola Stok</a> untuk update quantity produk
+            → <Link href="/dashboard/stock" className="hover:underline">Kelola Stok</Link> untuk update quantity produk
           </li>
           {staffProfile?.role === 'admin' && (
             <>
               <li>
-                → <a href="/dashboard/products" className="hover:underline">Kelola Produk</a> untuk tambah/edit produk & varian
+                → <Link href="/dashboard/products" className="hover:underline">Kelola Produk</Link> untuk tambah/edit produk & varian
               </li>
               <li>
-                → <a href="/dashboard/branches" className="hover:underline">Kelola Cabang</a> untuk atur info cabang & WhatsApp
+                → <Link href="/dashboard/branches" className="hover:underline">Kelola Cabang</Link> untuk atur info cabang & WhatsApp
               </li>
             </>
           )}
