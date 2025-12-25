@@ -1,12 +1,14 @@
-import { createClient } from '@/lib/supabase/server'
+'use client'
+
+import { createClient } from '@/lib/supabase/client'
 import Link from 'next/link'
 import Image from 'next/image'
 import { formatRupiah } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
-
-export const revalidate = 3600
+import { useEffect, useState } from 'react'
+import { useSearchParams } from 'next/navigation'
 
 interface Product {
   id: string
@@ -64,82 +66,101 @@ interface PopularCategory {
   product_count: number
 }
 
-export default async function HomePage({
-  searchParams,
-}: {
-  searchParams: Promise<{ category?: string; q?: string; sort?: string }>
-}) {
-  const params = await searchParams
-  const supabase = await createClient()
+export default function HomePage() {
+  const searchParams = useSearchParams()
+  const category = searchParams.get('category') || undefined
+  const q = searchParams.get('q') || undefined
+  const sort = searchParams.get('sort') || undefined
 
-  const [
-    { data: categories },
-    { data: newArrivals },
-    { data: bestDeals },
-    { data: popularCats },
-    { data: brands },
-  ] = await Promise.all([
-    supabase
-      .from('categories')
-      .select('id, slug, name, parent_id')
-      .order('name'),
-    supabase.from('v_new_arrivals').select('*'),
-    supabase.from('v_best_deals').select('*'),
-    supabase.from('v_popular_categories').select('*').limit(6),
-    supabase.from('v_all_brands').select('brand').limit(20),
-  ])
+  const [categories, setCategories] = useState<Category[]>([])
+  const [newArrivals, setNewArrivals] = useState<NewArrival[]>([])
+  const [bestDeals, setBestDeals] = useState<BestDeal[]>([])
+  const [popularCats, setPopularCats] = useState<PopularCategory[]>([])
+  const [brands, setBrands] = useState<string[]>([])
+  const [products, setProducts] = useState<(Product & { minPrice: number })[]>([])
+  const [loading, setLoading] = useState(true)
 
-  const categoryList = (categories || []) as Category[]
-  const newArrivalList = (newArrivals || []) as NewArrival[]
-  const bestDealList = (bestDeals || []) as BestDeal[]
-  const popularCategoryList = (popularCats || []) as PopularCategory[]
-  const brandList = ((brands || []) as any[]).map(b => b.brand).filter(Boolean) as string[]
+  useEffect(() => {
+    async function fetchData() {
+      setLoading(true)
+      const supabase = createClient()
 
-  let query = supabase
-    .from('products')
-    .select(`
-      id,
-      slug,
-      name,
-      brand,
-      base_image_url,
-      category_id,
-      discount_percent,
-      categories (
-        name,
-        slug
-      ),
-      product_skus (
-        price_idr
-      )
-    `)
-    .eq('is_active', true)
-    .order('name')
+      const [
+        { data: categoriesData },
+        { data: newArrivalsData },
+        { data: bestDealsData },
+        { data: popularCatsData },
+        { data: brandsData },
+      ] = await Promise.all([
+        supabase
+          .from('categories')
+          .select('id, slug, name, parent_id')
+          .order('name'),
+        supabase.from('v_new_arrivals').select('*'),
+        supabase.from('v_best_deals').select('*'),
+        supabase.from('v_popular_categories').select('*').limit(6),
+        supabase.from('v_all_brands').select('brand').limit(20),
+      ])
 
-  if (params.sort === 'newest') {
-    query = query.order('created_at', { ascending: false })
-  }
+      const categoryList = (categoriesData || []) as Category[]
+      setCategories(categoryList)
+      setNewArrivals((newArrivalsData || []) as NewArrival[])
+      setBestDeals((bestDealsData || []) as BestDeal[])
+      setPopularCats((popularCatsData || []) as PopularCategory[])
+      setBrands(((brandsData || []) as any[]).map(b => b.brand).filter(Boolean) as string[])
 
-  if (params.category) {
-    const category = categoryList.find(c => c.slug === params.category)
-    if (category) {
-      query = query.eq('category_id', category.id)
+      let query = supabase
+        .from('products')
+        .select(`
+          id,
+          slug,
+          name,
+          brand,
+          base_image_url,
+          category_id,
+          discount_percent,
+          categories (
+            name,
+            slug
+          ),
+          product_skus (
+            price_idr
+          )
+        `)
+        .eq('is_active', true)
+        .order('name')
+
+      if (sort === 'newest') {
+        query = query.order('created_at', { ascending: false })
+      }
+
+      if (category) {
+        const categoryObj = categoryList.find(c => c.slug === category)
+        if (categoryObj) {
+          query = query.eq('category_id', categoryObj.id)
+        }
+      }
+
+      if (q) {
+        const term = `%${q}%`
+        query = query.or(`name.ilike.${term},brand.ilike.${term}`)
+      }
+
+      const { data: productsData } = await query
+
+      const productsWithPrice = (productsData as Product[] || []).map(product => {
+        const minPrice = product.product_skus.length > 0
+          ? Math.min(...product.product_skus.map(sku => sku.price_idr))
+          : 0
+        return { ...product, minPrice }
+      })
+
+      setProducts(productsWithPrice)
+      setLoading(false)
     }
-  }
 
-  if (params.q) {
-    const term = `%${params.q}%`
-    query = query.or(`name.ilike.${term},brand.ilike.${term}`)
-  }
-
-  const { data: products } = await query
-
-  const productsWithPrice = (products as Product[] || []).map(product => {
-    const minPrice = product.product_skus.length > 0
-      ? Math.min(...product.product_skus.map(sku => sku.price_idr))
-      : 0
-    return { ...product, minPrice }
-  })
+    fetchData()
+  }, [category, q, sort])
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-50 to-white">
@@ -222,7 +243,7 @@ export default async function HomePage({
                   <div className="flex items-center gap-3 mb-2">
                     <div className="text-3xl">📦</div>
                     <div>
-                      <p className="text-2xl font-bold">{productsWithPrice.length}+</p>
+                      <p className="text-2xl font-bold">{products.length}+</p>
                       <p className="text-sm text-blue-100">Produk Tersedia</p>
                     </div>
                   </div>
@@ -268,42 +289,42 @@ export default async function HomePage({
                     <input
                       type="text"
                       name="q"
-                      defaultValue={params.q || ''}
+                      defaultValue={q || ''}
                       placeholder="Cari produk, brand, atau kategori..."
                       className="w-full pl-12 pr-4 py-3 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
                     />
                   </div>
                   <select
                     name="sort"
-                    defaultValue={params.sort || ''}
+                    defaultValue={sort || ''}
                     className="px-4 py-3 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white w-full sm:w-48"
                   >
                     <option value="">Urutkan: Default</option>
                     <option value="newest">Terbaru</option>
                   </select>
-                  {params.category && <input type="hidden" name="category" value={params.category} />}
+                  {category && <input type="hidden" name="category" value={category} />}
                   <Button type="submit" size="lg" className="font-semibold">
                     Terapkan Filter
                   </Button>
                 </div>
                 
-                {(params.q || params.sort || params.category) && (
+                {(q || sort || category) && (
                   <div className="flex items-center gap-3 pt-2">
                     <span className="text-sm text-slate-600">Filter aktif:</span>
                     <div className="flex gap-2 flex-wrap">
-                      {params.q && (
+                      {q && (
                         <Badge variant="secondary" className="gap-1">
-                          Pencarian: {params.q}
+                          Pencarian: {q}
                         </Badge>
                       )}
-                      {params.sort && (
+                      {sort && (
                         <Badge variant="secondary" className="gap-1">
-                          Urutan: {params.sort === 'newest' ? 'Terbaru' : 'Default'}
+                          Urutan: {sort === 'newest' ? 'Terbaru' : 'Default'}
                         </Badge>
                       )}
-                      {params.category && (
+                      {category && (
                         <Badge variant="secondary" className="gap-1">
-                          Kategori: {categoryList.find(c => c.slug === params.category)?.name}
+                          Kategori: {categories.find(c => c.slug === category)?.name}
                         </Badge>
                       )}
                     </div>
@@ -328,24 +349,24 @@ export default async function HomePage({
                   <Link
                     href="/"
                     className={`px-4 py-2 rounded-xl text-sm font-medium whitespace-nowrap transition-all ${
-                      !params.category
+                      !category
                         ? 'bg-blue-600 text-white shadow-md'
                         : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
                     }`}
                   >
                     Semua Produk
                   </Link>
-                  {categoryList.filter(c => !c.parent_id).map(category => (
+                  {categories.filter(c => !c.parent_id).map(cat => (
                     <Link
-                      key={category.id}
-                      href={`/?category=${category.slug}${params.q ? `&q=${encodeURIComponent(params.q)}` : ''}${params.sort ? `&sort=${params.sort}` : ''}`}
+                      key={cat.id}
+                      href={`/?category=${cat.slug}${q ? `&q=${encodeURIComponent(q)}` : ''}${sort ? `&sort=${sort}` : ''}`}
                       className={`px-4 py-2 rounded-xl text-sm font-medium whitespace-nowrap transition-all ${
-                        params.category === category.slug
+                        category === cat.slug
                           ? 'bg-blue-600 text-white shadow-md'
                           : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
                       }`}
                     >
-                      {category.name}
+                      {cat.name}
                     </Link>
                   ))}
                 </div>
@@ -354,14 +375,14 @@ export default async function HomePage({
           </div>
 
           {/* Popular Categories */}
-          {popularCategoryList.length > 0 && (
+          {popularCats.length > 0 && (
             <section className="mb-12">
               <div className="flex items-center gap-3 mb-6">
                 <div className="h-8 w-1 bg-gradient-to-b from-blue-600 to-purple-600 rounded-full"></div>
                 <h3 className="text-2xl font-bold text-gray-900">Kategori Populer</h3>
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
-                {popularCategoryList.map(cat => (
+                {popularCats.map(cat => (
                   <Link
                     key={cat.id}
                     href={`/?category=${cat.slug}`}
@@ -377,7 +398,7 @@ export default async function HomePage({
           )}
 
           {/* Main Product Grid */}
-          {productsWithPrice.length === 0 ? (
+          {products.length === 0 ? (
             <div className="text-center py-20 bg-white rounded-2xl border-2 border-dashed border-slate-300">
               <div className="text-6xl mb-4">📭</div>
               <p className="text-gray-900 text-xl font-bold">Belum ada produk tersedia</p>
@@ -393,13 +414,13 @@ export default async function HomePage({
                   <div className="h-8 w-1 bg-gradient-to-b from-blue-600 to-purple-600 rounded-full"></div>
                   <div>
                     <h3 className="text-2xl font-bold text-gray-900">Semua Produk</h3>
-                    <p className="text-sm text-slate-500">{productsWithPrice.length} produk ditemukan</p>
+                    <p className="text-sm text-slate-500">{products.length} produk ditemukan</p>
                   </div>
                 </div>
               </div>
               
               <div className="grid grid-cols-1 xs:grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-6 mb-12">
-                {productsWithPrice.map(product => (
+                {products.map(product => (
                   <Link
                     key={product.id}
                     href={`/products/${product.slug}`}
@@ -463,7 +484,7 @@ export default async function HomePage({
           )}
 
           {/* New Arrivals */}
-          {newArrivalList.length > 0 && (
+          {newArrivals.length > 0 && (
             <section className="mb-12">
               <div className="flex items-center justify-between mb-6">
                 <div className="flex items-center gap-3">
@@ -481,7 +502,7 @@ export default async function HomePage({
                 </Link>
               </div>
               <div className="grid grid-cols-1 xs:grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-6">
-                {newArrivalList.slice(0, 4).map(product => (
+                {newArrivals.slice(0, 4).map(product => (
                   <Link
                     key={product.id}
                     href={`/products/${product.slug}`}
@@ -528,7 +549,7 @@ export default async function HomePage({
           )}
 
           {/* Best Deals */}
-          {bestDealList.length > 0 && (
+          {bestDeals.length > 0 && (
             <section className="mb-12">
               <div className="flex items-center justify-between mb-6">
                 <div className="flex items-center gap-3">
@@ -546,7 +567,7 @@ export default async function HomePage({
                 </Link>
               </div>
               <div className="grid grid-cols-1 xs:grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-6">
-                {bestDealList.slice(0, 4).map(product => (
+                {bestDeals.slice(0, 4).map(product => (
                   <Link
                     key={product.id}
                     href={`/products/${product.slug}`}
@@ -600,7 +621,7 @@ export default async function HomePage({
           )}
 
           {/* Brand Showcase */}
-          {brandList.length > 0 && (
+          {brands.length > 0 && (
             <section className="mb-12">
               <div className="flex items-center gap-3 mb-6">
                 <div className="h-8 w-1 bg-gradient-to-b from-purple-500 to-pink-500 rounded-full"></div>
@@ -611,7 +632,7 @@ export default async function HomePage({
               </div>
               <div className="bg-gradient-to-br from-slate-50 to-blue-50 rounded-2xl border border-slate-200 p-8 shadow-medium">
                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-                  {brandList.slice(0, 10).map(brand => (
+                  {brands.slice(0, 10).map(brand => (
                     <Link
                       key={brand}
                       href={`/?q=${encodeURIComponent(brand)}`}
@@ -621,10 +642,10 @@ export default async function HomePage({
                     </Link>
                   ))}
                 </div>
-                {brandList.length > 10 && (
+                {brands.length > 10 && (
                   <div className="mt-6 text-center">
                     <Link href="/" className="text-blue-600 hover:text-blue-700 font-semibold text-sm">
-                      Lihat {brandList.length - 10}+ brand lainnya →
+                      Lihat {brands.length - 10}+ brand lainnya →
                     </Link>
                   </div>
                 )}
@@ -798,7 +819,7 @@ export default async function HomePage({
             <div>
               <h5 className="font-bold text-white mb-4 text-lg">Kategori</h5>
               <ul className="space-y-3 text-sm">
-                {categoryList.filter(c => !c.parent_id).slice(0, 5).map(cat => (
+                {categories.filter(c => !c.parent_id).slice(0, 5).map(cat => (
                   <li key={cat.id}>
                     <Link href={`/?category=${cat.slug}`} className="text-slate-400 hover:text-white transition-colors flex items-center gap-2 group">
                       <svg className="w-4 h-4 group-hover:translate-x-1 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
